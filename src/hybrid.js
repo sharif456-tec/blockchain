@@ -117,6 +117,27 @@ export class HybridNetwork {
   verifyAnchor(anchor) {
     return this.anchors.some(candidate => candidate.anchorId === anchor.anchorId && candidate.checkpointRoot === anchor.checkpointRoot && candidate.height === anchor.height);
   }
+
+  snapshot() {
+    return {
+      validators: [...this.validators.values()],
+      anchorInterval: this.anchorInterval,
+      state: Object.fromEntries(this.state),
+      nonces: Object.fromEntries(this.nonces),
+      blocks: this.blocks,
+      anchors: this.anchors,
+      pending: this.pending
+    };
+  }
+
+  static fromSnapshot(snapshot) {
+    const network = new HybridNetwork({ validators: snapshot.validators, anchorInterval: snapshot.anchorInterval, initialBalances: snapshot.state });
+    network.nonces = new Map(Object.entries(snapshot.nonces || {}).map(([address, nonce]) => [address, Number(nonce)]));
+    network.blocks = snapshot.blocks || [];
+    network.anchors = snapshot.anchors || [];
+    network.pending = snapshot.pending || [];
+    return network;
+  }
 }
 
 export function createTransaction({ chainId = CHAIN_ID, from, to, amount, fee = 0, nonce, identity }) {
