@@ -35,3 +35,17 @@ The static network dashboard is in `public/` and is configured by `wrangler.toml
 - Git repository: https://github.com/sharif456-tec/blockchain
 
 In Cloudflare Pages, connect the repository above and set the output directory to `public`. If the URL returns `404`, trigger a new deployment and confirm that the Pages project is using this repository and the `public` output directory.
+
+## Supabase integration
+
+Supabase schema and a read-only Edge Function are included in `supabase/`.
+
+```bash
+supabase login
+supabase link --project-ref YOUR_PROJECT_REF
+supabase db push
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
+supabase functions deploy network-status --no-verify-jwt
+```
+
+Function routes: `/network-status`, `/network-status/blocks`, `/network-status/anchors`, and `/network-status/accounts`. Keep the service role key server-side; never put it in the Pages frontend.

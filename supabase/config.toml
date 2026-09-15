@@ -1,0 +1,4 @@
+project_id = "iit-network"
+
+[functions.network-status]
+verify_jwt = false
