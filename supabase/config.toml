@@ -1,4 +1,4 @@
-project_id = "iit-network"
+project_id = "iqctjcolcatswpkdrdqi"
 
 [functions.network-status]
 verify_jwt = false
