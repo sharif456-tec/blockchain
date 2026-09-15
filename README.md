@@ -14,3 +14,14 @@ npm run demo
 ```
 
 The prototype is for devnet learning and integration tests. It is not production consensus software and does not handle real funds.
+
+## Cloudflare Pages
+
+The static network dashboard is in `public/` and is configured by `wrangler.toml`.
+
+- Production URL: https://blockchain-567.pages.dev/
+- Build command: none
+- Output directory: `public`
+- Git repository: https://github.com/sharif456-tec/blockchain
+
+In Cloudflare Pages, connect the repository above and set the output directory to `public`. The current Pages URL returns `522` until the Pages project has a healthy deployment or its origin configuration is repaired.

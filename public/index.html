@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="IIT-NETWORK hybrid BDTC blockchain">
+  <title>IIT-NETWORK | Hybrid BDTC Network</title>
+  <style>
+    :root { color-scheme: dark; --ink: #f2f6f4; --muted: #a5b7b1; --bg: #08110f; --panel: #101d19; --line: #254039; --mint: #73e0b1; --amber: #f2b866; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; color: var(--ink); background: radial-gradient(circle at 90% 0%, #17372e 0, transparent 35%), var(--bg); font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
+    main { width: min(1120px, calc(100% - 40px)); margin: auto; padding: 28px 0 70px; }
+    nav { display: flex; align-items: center; justify-content: space-between; padding: 8px 0 70px; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; letter-spacing: .08em; }
+    .mark { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--mint); color: var(--mint); border-radius: 50%; }
+    a { color: var(--mint); text-decoration: none; }
+    .eyebrow { color: var(--amber); text-transform: uppercase; letter-spacing: .16em; font-size: .75rem; font-weight: 800; }
+    h1 { max-width: 760px; margin: 14px 0 18px; font: 700 clamp(2.7rem, 7vw, 6.2rem)/.95 Georgia, serif; letter-spacing: -.04em; }
+    .intro { max-width: 650px; color: var(--muted); font-size: 1.12rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 30px 0 74px; }
+    .button { display: inline-flex; padding: 12px 18px; border: 1px solid var(--mint); color: var(--bg); background: var(--mint); font-weight: 800; border-radius: 4px; }
+    .button.alt { color: var(--ink); background: transparent; border-color: var(--line); }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .card { min-height: 180px; padding: 22px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line); border-radius: 8px; }
+    .card strong { display: block; margin: 24px 0 8px; font-size: 1.25rem; }
+    .card p { margin: 0; color: var(--muted); }
+    .status { display: flex; align-items: center; gap: 8px; color: var(--mint); font-weight: 800; }
+    .dot { width: 9px; height: 9px; background: var(--mint); border-radius: 50%; box-shadow: 0 0 0 5px #73e0b120; }
+    footer { margin-top: 70px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
+    @media (max-width: 700px) { main { width: min(100% - 28px, 1120px); } nav { padding-bottom: 48px; } .grid { grid-template-columns: 1fr; } h1 { font-size: 3.5rem; } }
+  </style>
+</head>
+<body>
+  <main>
+    <nav><div class="brand"><span class="mark">I</span> IIT-NETWORK</div><a href="https://github.com/sharif456-tec/blockchain">GitHub ↗</a></nav>
+    <section>
+      <div class="eyebrow">BDTC hybrid blockchain / testnet</div>
+      <h1>Fast private execution. Publicly verifiable history.</h1>
+      <p class="intro">IIT-NETWORK combines a permissioned BFT validator layer with cryptographic public anchors. BDTC is the native settlement coin.</p>
+      <div class="actions"><a class="button" href="https://github.com/sharif456-tec/blockchain">View source ↗</a><a class="button alt" href="../HYBRID-BLOCKCHAIN-DESIGN.md">Read protocol design</a></div>
+    </section>
+    <section class="grid" aria-label="Network features">
+      <article class="card"><div class="status"><span class="dot"></span> Execution layer</div><strong>Permissioned BFT</strong><p>Validator quorum finalizes transactions without waiting for a public chain.</p></article>
+      <article class="card"><div class="status"><span class="dot"></span> Audit layer</div><strong>Public anchors</strong><p>Checkpoint roots make private history independently verifiable.</p></article>
+      <article class="card"><div class="status"><span class="dot"></span> Native asset</div><strong>BDTC settlement</strong><p>Signed integer-unit transfers with chain ID and replay protection.</p></article>
+    </section>
+    <footer>Devnet prototype. Do not use for real funds. Protocol and implementation are under active development.</footer>
+  </main>
+</body>
+</html>
