@@ -24,4 +24,4 @@ The static network dashboard is in `public/` and is configured by `wrangler.toml
 - Output directory: `public`
 - Git repository: https://github.com/sharif456-tec/blockchain
 
-In Cloudflare Pages, connect the repository above and set the output directory to `public`. The current Pages URL returns `522` until the Pages project has a healthy deployment or its origin configuration is repaired.
+In Cloudflare Pages, connect the repository above and set the output directory to `public`. If the URL returns `404`, trigger a new deployment and confirm that the Pages project is using this repository and the `public` output directory.
