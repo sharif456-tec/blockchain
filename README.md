@@ -15,6 +15,16 @@ npm run demo
 
 The prototype is for devnet learning and integration tests. It is not production consensus software and does not handle real funds.
 
+## Persistent node
+
+Run a local node with durable JSON state:
+
+```bash
+npm run node
+```
+
+Endpoints: `GET /health`, `GET /state`, `GET /blocks`, `GET /anchors`, `POST /transactions`, `POST /blocks/propose`, and `POST /anchors/verify`. Set `PORT` and `DATA_FILE` to run separate nodes or choose a different storage path.
+
 ## Cloudflare Pages
 
 The static network dashboard is in `public/` and is configured by `wrangler.toml`.
