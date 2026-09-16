@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BdtccBridge, BdtccRpcClient, BDTC_ASSET } from '../src/bdtcc.js';
+import { BdtccSettlement } from '../src/bdtcc_settlement.js';
+import { HybridNetwork } from '../src/hybrid.js';
+import { createIdentity } from '../src/crypto.js';
 
 test('BDTC asset is fixed to 8 decimal atomic units', () => {
   assert.equal(BDTC_ASSET.symbol, 'BDTC');
@@ -94,5 +97,120 @@ test('BDTCC RPC verification rejects a spent output', async () => {
   await assert.rejects(
     () => bridge.verifyExternalDeposit({ txid: 'tx-spent', vout: 0, expectedAmount: 100_000_000 }),
     /spent or unavailable/
+  );
+});
+
+test('verified BDTCC deposit credits BDTC once and rejects replay', async () => {
+  const validators = [createIdentity('v1'), createIdentity('v2'), createIdentity('v3')];
+  const treasury = createIdentity('treasury');
+  const network = new HybridNetwork({
+    validators,
+    initialBalances: { [treasury.id]: 1_000_000_000 }
+  });
+  const bridge = new BdtccBridge({ minConfirmations: 1 });
+  bridge.verifyExternalDeposit = async () => ({
+    verified: true,
+    txid: 'external-1',
+    vout: 0,
+    amount: 125_000_000,
+    confirmations: 8,
+    address: 'bdtc-deposit-address'
+  });
+  const settlement = new BdtccSettlement({
+    bridge,
+    network,
+    treasuryAddress: treasury.id,
+    treasuryIdentity: treasury,
+    reserveAddress: 'reserve'
+  });
+
+  const first = await settlement.settleDeposit({
+    txid: 'external-1',
+    vout: 0,
+    recipient: 'alice',
+    expectedAmount: 125_000_000,
+    expectedAddress: 'bdtc-deposit-address',
+    proposerId: validators[0].id
+  });
+
+  assert.equal(first.external.amount, 125_000_000);
+  assert.equal(network.balanceOf('alice'), 125_000_000);
+  await assert.rejects(
+    () => settlement.settleDeposit({
+      txid: 'external-1',
+      vout: 0,
+      recipient: 'alice',
+      expectedAmount: 125_000_000,
+      expectedAddress: 'bdtc-deposit-address',
+      proposerId: validators[0].id
+    }),
+    /already settled/
+  );
+});
+
+test('withdrawal locks BDTC in reserve and is replay protected', () => {
+  const validators = [createIdentity('v1'), createIdentity('v2'), createIdentity('v3')];
+  const alice = createIdentity('alice');
+  const bridge = new BdtccBridge();
+  const network = new HybridNetwork({
+    validators,
+    initialBalances: { [alice.id]: 200_000_000 }
+  });
+  const settlement = new BdtccSettlement({
+    bridge,
+    network,
+    treasuryAddress: 'treasury',
+    treasuryIdentity: createIdentity('treasury'),
+    reserveAddress: 'reserve'
+  });
+
+  const record = settlement.createWithdrawal({
+    recipient: alice.id,
+    amount: 75_000_000,
+    reference: 'withdrawal-1',
+    identity: alice,
+    proposerId: validators[0].id
+  });
+
+  assert.equal(record.status, 'locked');
+  assert.equal(network.balanceOf(alice.id), 125_000_000);
+  assert.equal(network.balanceOf('reserve'), 75_000_000);
+  assert.throws(
+    () => settlement.createWithdrawal({
+      recipient: alice.id,
+      amount: 75_000_000,
+      reference: 'withdrawal-1',
+      identity: alice,
+      proposerId: validators[0].id
+    }),
+    /already exists/
+  );
+});
+
+test('withdrawal lifecycle tracks broadcast and settlement exactly once', () => {
+  const validators = [createIdentity('v1'), createIdentity('v2'), createIdentity('v3')];
+  const alice = createIdentity('alice');
+  const network = new HybridNetwork({ validators, initialBalances: { [alice.id]: 100_000_000 } });
+  const settlement = new BdtccSettlement({
+    bridge: new BdtccBridge(),
+    network,
+    treasuryAddress: 'treasury',
+    treasuryIdentity: createIdentity('treasury'),
+    reserveAddress: 'reserve'
+  });
+  const record = settlement.createWithdrawal({
+    recipient: alice.id,
+    amount: 10_000_000,
+    reference: 'withdrawal-2',
+    identity: alice,
+    proposerId: validators[0].id
+  });
+
+  settlement.markWithdrawalBroadcast(record.intent.intentId, 'bdtcc-tx-22');
+  const settled = settlement.markWithdrawalSettled(record.intent.intentId, 'bdtcc-tx-22');
+  assert.equal(settled.status, 'settled');
+  assert.throws(
+    () => settlement.markWithdrawalSettled(record.intent.intentId, 'bdtcc-tx-22'),
+    /already settled/
   );
 });
