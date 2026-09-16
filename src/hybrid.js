@@ -8,9 +8,7 @@ function merkleRoot(items) {
   let layer = items.map(item => digest(item));
   while (layer.length > 1) {
     const next = [];
-    for (let index = 0; index < layer.length; index += 2) {
-      next.push(digest(layer[index] + (layer[index + 1] || layer[index])));
-    }
+    for (let index = 0; index < layer.length; index += 2) next.push(digest(layer[index] + (layer[index + 1] || layer[index])));
     layer = next;
   }
   return layer[0];
@@ -21,24 +19,13 @@ function transactionPayload(transaction) {
   return payload;
 }
 
-function stateRoot(state) {
-  return digest(Object.fromEntries([...state].sort()));
-}
+function stateRoot(state) { return digest(Object.fromEntries([...state].sort())); }
 
 function blockHeader(block) {
-  return {
-    chainId: block.chainId,
-    height: block.height,
-    previousHash: block.previousHash,
-    transactionsRoot: block.transactionsRoot,
-    stateRoot: block.stateRoot,
-    proposer: block.proposer
-  };
+  return { chainId: block.chainId, height: block.height, previousHash: block.previousHash, transactionsRoot: block.transactionsRoot, stateRoot: block.stateRoot, proposer: block.proposer };
 }
 
-export function quorumFor(validatorCount) {
-  return Math.floor((validatorCount * 2) / 3) + 1;
-}
+export function quorumFor(validatorCount) { return Math.floor((validatorCount * 2) / 3) + 1; }
 
 export class HybridNetwork {
   constructor({ validators, initialBalances = {}, anchorInterval = 2 }) {
@@ -70,7 +57,7 @@ export class HybridNetwork {
     return transaction;
   }
 
-  proposeBlock(proposerId) {
+  buildBlock(proposerId) {
     const proposer = this.validators.get(proposerId);
     if (!proposer) throw new Error('Unknown proposer');
     const transactions = [...this.pending];
@@ -85,11 +72,47 @@ export class HybridNetwork {
       stateRoot: stateRoot(workingState),
       proposer: proposerId
     };
-    const blockHash = digest(header);
-    const votes = [...this.validators.values()].map(validator => ({ validator: validator.id, signature: sign(blockHash, validator.privateKey) }));
-    const block = { ...header, transactions, hash: blockHash, quorumCertificate: votes };
-    this.finalizeBlock(block, workingState, workingNonces);
-    return block;
+    return { ...header, transactions, hash: digest(header) };
+  }
+
+  voteForBlock(block, validatorId) {
+    const validator = this.validators.get(validatorId);
+    if (!validator?.privateKey) throw new Error(`Private key unavailable for validator ${validatorId}`);
+    if (!this.verifyBlockProposal(block)) throw new Error('Invalid block proposal');
+    return { validator: validatorId, signature: sign(block.hash, validator.privateKey) };
+  }
+
+  verifyBlockProposal(block) {
+    if (block.chainId !== CHAIN_ID || block.height !== this.blocks.length + 1) return false;
+    if (!this.validators.has(block.proposer)) return false;
+    if (block.previousHash !== (this.blocks.at(-1)?.hash || digest('genesis'))) return false;
+    if (!Array.isArray(block.transactions) || block.transactionsRoot !== merkleRoot(block.transactions)) return false;
+    if (digest(blockHeader(block)) !== block.hash) return false;
+    const workingState = new Map(this.state);
+    const workingNonces = new Map(this.nonces);
+    try { for (const transaction of block.transactions) this.applyTransaction(transaction, workingState, workingNonces); } catch { return false; }
+    return stateRoot(workingState) === block.stateRoot;
+  }
+
+  finalizeWithVotes(block, votes) {
+    if (!Array.isArray(votes) || votes.length < quorumFor(this.validators.size)) throw new Error('Insufficient validator quorum');
+    const unique = new Map();
+    for (const vote of votes) {
+      const validator = this.validators.get(vote.validator);
+      if (!validator || unique.has(vote.validator) || !verify(block.hash, vote.signature, validator.publicKey)) throw new Error('Invalid validator vote');
+      unique.set(vote.validator, vote);
+    }
+    if (unique.size < quorumFor(this.validators.size)) throw new Error('Insufficient validator quorum');
+    const workingState = new Map(this.state);
+    const workingNonces = new Map(this.nonces);
+    for (const transaction of block.transactions) this.applyTransaction(transaction, workingState, workingNonces);
+    return this.finalizeBlock({ ...block, quorumCertificate: [...unique.values()] }, workingState, workingNonces);
+  }
+
+  proposeBlock(proposerId) {
+    const block = this.buildBlock(proposerId);
+    const votes = [...this.validators.values()].map(validator => this.voteForBlock(block, validator.id));
+    return this.finalizeWithVotes(block, votes);
   }
 
   applyTransaction(transaction, state = this.state, nonces = this.nonces) {
@@ -114,12 +137,7 @@ export class HybridNetwork {
   }
 
   verifyBlock(block, expectedState = null, expectedNonces = null) {
-    if (block.chainId !== CHAIN_ID || block.height !== this.blocks.length + 1) return false;
-    if (!this.validators.has(block.proposer)) return false;
-    if (block.previousHash !== (this.blocks.at(-1)?.hash || digest('genesis'))) return false;
-    if (!Array.isArray(block.transactions)) return false;
-    if (block.transactionsRoot !== merkleRoot(block.transactions)) return false;
-    if (digest(blockHeader(block)) !== block.hash) return false;
+    if (!this.verifyBlockProposal(block)) return false;
     if (!block.quorumCertificate || block.quorumCertificate.length < quorumFor(this.validators.size)) return false;
     const seen = new Set();
     for (const vote of block.quorumCertificate) {
@@ -127,13 +145,10 @@ export class HybridNetwork {
       if (!validator || seen.has(vote.validator) || !verify(block.hash, vote.signature, validator.publicKey)) return false;
       seen.add(vote.validator);
     }
+    if (seen.size < quorumFor(this.validators.size)) return false;
     const workingState = new Map(this.state);
     const workingNonces = new Map(this.nonces);
-    try {
-      for (const transaction of block.transactions) this.applyTransaction(transaction, workingState, workingNonces);
-    } catch {
-      return false;
-    }
+    try { for (const transaction of block.transactions) this.applyTransaction(transaction, workingState, workingNonces); } catch { return false; }
     if (stateRoot(workingState) !== block.stateRoot) return false;
     if (expectedState && stateRoot(expectedState) !== block.stateRoot) return false;
     if (expectedNonces) {
@@ -151,13 +166,11 @@ export class HybridNetwork {
     return anchor;
   }
 
-  verifyAnchor(anchor) {
-    return this.anchors.some(candidate => candidate.anchorId === anchor.anchorId && candidate.checkpointRoot === anchor.checkpointRoot && candidate.height === anchor.height);
-  }
+  verifyAnchor(anchor) { return this.anchors.some(candidate => candidate.anchorId === anchor.anchorId && candidate.checkpointRoot === anchor.checkpointRoot && candidate.height === anchor.height); }
 
   snapshot() {
     return {
-      validators: [...this.validators.values()],
+      validators: [...this.validators.values()].map(({ privateKey, ...publicIdentity }) => publicIdentity),
       anchorInterval: this.anchorInterval,
       state: Object.fromEntries(this.state),
       nonces: Object.fromEntries(this.nonces),
@@ -167,8 +180,8 @@ export class HybridNetwork {
     };
   }
 
-  static fromSnapshot(snapshot) {
-    const network = new HybridNetwork({ validators: snapshot.validators, anchorInterval: snapshot.anchorInterval, initialBalances: snapshot.state });
+  static fromSnapshot(snapshot, validators = snapshot.validators) {
+    const network = new HybridNetwork({ validators, anchorInterval: snapshot.anchorInterval, initialBalances: snapshot.state });
     network.nonces = new Map(Object.entries(snapshot.nonces || {}).map(([address, nonce]) => [address, Number(nonce)]));
     network.blocks = snapshot.blocks || [];
     network.anchors = snapshot.anchors || [];
