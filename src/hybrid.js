@@ -65,6 +65,7 @@ export class HybridNetwork {
     if (!transaction.publicKey || !verify(transactionPayload(transaction), transaction.signature, transaction.publicKey)) throw new Error('Invalid transaction signature');
     if (this.balanceOf(transaction.from) < transaction.amount + transaction.fee) throw new Error('Insufficient balance');
     if (this.pending.some(candidate => digest(candidate) === digest(transaction))) throw new Error('Duplicate pending transaction');
+    if (this.pending.some(candidate => candidate.from === transaction.from && candidate.nonce === transaction.nonce)) throw new Error('Conflicting pending nonce');
     this.pending.push(transaction);
     return transaction;
   }
