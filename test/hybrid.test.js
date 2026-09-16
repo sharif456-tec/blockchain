@@ -37,7 +37,6 @@ test('tampered block fields are rejected', () => {
   const block = network.proposeBlock(validators[0].id);
   const tampered = { ...block, proposer: validators[1].id };
   assert.equal(network.verifyBlock(tampered), false);
-
   const tamperedTransactions = { ...block, transactions: [] };
   assert.equal(network.verifyBlock(tamperedTransactions), false);
 });
@@ -47,7 +46,6 @@ test('duplicate pending transactions and invalid signatures are rejected', () =>
   const transaction = createTransaction({ from: 'alice', to: 'bob', amount: 100, nonce: 0, identity: alice });
   network.submitTransaction(transaction);
   assert.throws(() => network.submitTransaction(transaction), /Duplicate pending transaction/);
-
   const forged = { ...createTransaction({ from: 'alice', to: 'bob', amount: 100, nonce: 1, identity: alice }), publicKey: bob.publicKey };
   assert.throws(() => network.submitTransaction(forged), /Invalid transaction signature/);
 });
@@ -56,4 +54,11 @@ test('unknown proposers cannot create blocks', () => {
   const { alice, bob, network } = setup();
   network.submitTransaction(createTransaction({ from: 'alice', to: 'bob', amount: 100, nonce: 0, identity: alice }));
   assert.throws(() => network.proposeBlock('not-a-validator'), /Unknown proposer/);
+});
+
+test('conflicting pending nonces are rejected', () => {
+  const { alice, bob, network } = setup();
+  network.submitTransaction(createTransaction({ from: 'alice', to: 'bob', amount: 100, nonce: 0, identity: alice }));
+  const conflicting = createTransaction({ from: 'alice', to: bob.id, amount: 200, nonce: 0, identity: alice });
+  assert.throws(() => network.submitTransaction(conflicting), /Conflicting pending nonce/);
 });
