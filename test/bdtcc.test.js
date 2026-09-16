@@ -100,6 +100,58 @@ test('BDTCC RPC verification rejects a spent output', async () => {
   );
 });
 
+test('BDTCC RPC client broadcasts raw transaction and reads confirmation status', async () => {
+  const calls = [];
+  const rpc = new BdtccRpcClient({
+    url: 'http://127.0.0.1:8332',
+    fetchImpl: async (_url, options) => {
+      const request = JSON.parse(options.body);
+      calls.push(request);
+      if (request.method === 'sendrawtransaction') {
+        assert.deepEqual(request.params, ['02000000deadbeef']);
+        return { ok: true, status: 200, json: async () => ({ result: 'external-tx-99' }) };
+      }
+      if (request.method === 'gettransaction') {
+        assert.deepEqual(request.params, ['external-tx-99', false]);
+        return { ok: true, status: 200, json: async () => ({ result: {
+          confirmations: 7,
+          blockhash: 'block-99'
+        } }) };
+      }
+      throw new Error(`unexpected method ${request.method}`);
+    }
+  });
+
+  const bridge = new BdtccBridge({ rpc, minConfirmations: 6 });
+  const broadcast = await bridge.broadcastWithdrawal('02000000deadbeef');
+  assert.deepEqual(broadcast, { txid: 'external-tx-99', broadcast: true });
+
+  const status = await bridge.getWithdrawalStatus('external-tx-99');
+  assert.deepEqual(status, {
+    txid: 'external-tx-99',
+    confirmations: 7,
+    settled: true,
+    blockHash: 'block-99',
+    raw: { confirmations: 7, blockhash: 'block-99' }
+  });
+  assert.equal(calls.length, 2);
+});
+
+test('BDTCC withdrawal confirmation remains unsettled below threshold', async () => {
+  const rpc = new BdtccRpcClient({
+    url: 'http://127.0.0.1:8332',
+    fetchImpl: async (_url, options) => {
+      const request = JSON.parse(options.body);
+      assert.equal(request.method, 'gettransaction');
+      return { ok: true, status: 200, json: async () => ({ result: { confirmations: 2 } }) };
+    }
+  });
+  const bridge = new BdtccBridge({ rpc, minConfirmations: 6 });
+  const status = await bridge.getWithdrawalStatus('external-tx-pending');
+  assert.equal(status.settled, false);
+  assert.equal(status.confirmations, 2);
+});
+
 test('verified BDTCC deposit credits BDTC once and rejects replay', async () => {
   const validators = [createIdentity('v1'), createIdentity('v2'), createIdentity('v3')];
   const treasury = createIdentity('treasury');
