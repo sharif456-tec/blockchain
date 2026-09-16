@@ -13,10 +13,31 @@ const settlementFile = path.resolve(process.env.BDTCC_SETTLEMENT_FILE || 'data/b
 const apiToken = process.env.NODE_API_TOKEN || '';
 const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 1_048_576);
 const requestTimeoutMs = Number(process.env.REQUEST_TIMEOUT_MS || 15_000);
+const production = process.env.NODE_ENV === 'production';
+
+function required(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function loadValidators() {
+  const validatorsFile = process.env.VALIDATORS_FILE;
+  if (validatorsFile) {
+    const file = JSON.parse(fs.readFileSync(path.resolve(validatorsFile), 'utf8'));
+    if (!Array.isArray(file) || file.length < 3) throw new Error('VALIDATORS_FILE must contain at least 3 validator identities');
+    return file.map((identity) => {
+      if (!identity.id || !identity.publicKey || !identity.privateKey) throw new Error('Each validator must contain id, publicKey and privateKey');
+      return identity;
+    });
+  }
+  if (production) throw new Error('VALIDATORS_FILE is required in production; refusing to generate ephemeral validator keys');
+  return ['validator-a', 'validator-b', 'validator-c'].map(createIdentity);
+}
 
 function createNetwork() {
   if (fs.existsSync(dataFile)) return HybridNetwork.fromSnapshot(JSON.parse(fs.readFileSync(dataFile, 'utf8')));
-  const validators = ['validator-a', 'validator-b', 'validator-c'].map(createIdentity);
+  const validators = loadValidators();
   const network = new HybridNetwork({ validators, initialBalances: { treasury: 21_000_000 * 100_000_000 }, anchorInterval: 10 });
   persist(network);
   return network;
@@ -30,24 +51,43 @@ function persist(network) {
 }
 
 const network = createNetwork();
-const treasuryIdentity = network.validators.get('validator-a');
+const treasuryValidatorId = process.env.TREASURY_VALIDATOR_ID || (production ? required('TREASURY_VALIDATOR_ID') : 'validator-a');
+const treasuryIdentity = network.validators.get(treasuryValidatorId);
+if (!treasuryIdentity) throw new Error(`Treasury validator ${treasuryValidatorId} is not configured`);
+
 const rpcUrl = process.env.BDTCC_RPC_URL;
 const rpc = rpcUrl ? new BdtccRpcClient({
   url: rpcUrl,
   username: process.env.BDTCC_RPC_USERNAME,
   password: process.env.BDTCC_RPC_PASSWORD
 }) : null;
+const bdtccNetworkId = process.env.BDTCC_NETWORK_ID || '';
+const depositAddress = process.env.BDTCC_DEPOSIT_ADDRESS || '';
+const bdtcTreasuryAddress = process.env.BDTC_TREASURY_ADDRESS || '';
+const bdtcReserveAddress = process.env.BDTC_RESERVE_ADDRESS || '';
+
+if (production) {
+  if (!rpcUrl) throw new Error('BDTCC_RPC_URL is required in production');
+  required('BDTCC_RPC_USERNAME');
+  required('BDTCC_RPC_PASSWORD');
+  required('BDTCC_NETWORK_ID');
+  required('BDTCC_DEPOSIT_ADDRESS');
+  required('BDTC_TREASURY_ADDRESS');
+  required('BDTC_RESERVE_ADDRESS');
+  required('NODE_API_TOKEN');
+}
+
 const bridge = new BdtccBridge({
-  networkId: process.env.BDTCC_NETWORK_ID || 'bdtcc',
+  networkId: bdtccNetworkId,
   minConfirmations: Number(process.env.BDTCC_MIN_CONFIRMATIONS || 6),
   rpc
 });
 const settlement = new BdtccSettlement({
   bridge,
   network,
-  treasuryAddress: process.env.BDTC_TREASURY_ADDRESS || 'treasury',
+  treasuryAddress: bdtcTreasuryAddress || 'treasury',
   treasuryIdentity,
-  reserveAddress: process.env.BDTC_RESERVE_ADDRESS || 'bdtc-reserve',
+  reserveAddress: bdtcReserveAddress || 'bdtc-reserve',
   store: new JsonSettlementStore({ filePath: settlementFile })
 });
 
@@ -57,7 +97,7 @@ function json(response, status, value) {
 }
 
 function authorized(request) {
-  if (!apiToken) return true;
+  if (!apiToken) return !production;
   const supplied = request.headers.authorization?.startsWith('Bearer ')
     ? request.headers.authorization.slice(7)
     : request.headers['x-api-key'];
@@ -94,7 +134,7 @@ const server = http.createServer(async (request, response) => {
         chainId: CHAIN_ID,
         height: network.blocks.length,
         anchors: network.anchors.length,
-        bdtcc: { configured: Boolean(rpc), networkId: bridge.networkId, minConfirmations: bridge.minConfirmations }
+        bdtcc: { configured: Boolean(rpc), networkId: bridge.networkId || null, minConfirmations: bridge.minConfirmations }
       });
     }
     if (request.method === 'GET' && url.pathname === '/state') {
@@ -112,7 +152,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'GET' && url.pathname === '/bdtcc/status') {
       if (!requireAuth(request, response)) return;
       const chain = rpc ? await rpc.getBlockchainInfo() : null;
-      return json(response, 200, { configured: Boolean(rpc), networkId: bridge.networkId, minConfirmations: bridge.minConfirmations, chain });
+      return json(response, 200, { configured: Boolean(rpc), networkId: bridge.networkId || null, minConfirmations: bridge.minConfirmations, chain });
     }
     if (request.method === 'GET' && url.pathname === '/bdtcc/withdrawals') {
       if (!requireAuth(request, response)) return;
@@ -143,7 +183,7 @@ const server = http.createServer(async (request, response) => {
         vout: body.vout,
         recipient: body.recipient,
         expectedAmount: body.expectedAmount,
-        expectedAddress: body.expectedAddress || process.env.BDTCC_DEPOSIT_ADDRESS,
+        expectedAddress: body.expectedAddress || depositAddress,
         proposerId: body.proposerId || network.validators.keys().next().value
       });
       persist(network);

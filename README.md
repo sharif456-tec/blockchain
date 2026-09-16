@@ -27,49 +27,65 @@ The node exposes `GET /health`, `GET /state`, `GET /blocks`, `GET /anchors`, `PO
 
 ### Node security
 
-Set `NODE_API_TOKEN` to require `Authorization: Bearer <token>` (or `X-API-Key`) on state, block, transaction, proposal, anchor, and BDTCC settlement endpoints. `MAX_BODY_BYTES` and `REQUEST_TIMEOUT_MS` can limit request size and duration.
+Set `NODE_API_TOKEN` to require `Authorization: Bearer <token>` (or `X-API-Key`) on protected endpoints. `MAX_BODY_BYTES` and `REQUEST_TIMEOUT_MS` can limit request size and duration.
 
-Example:
+For production, `NODE_API_TOKEN` is mandatory. Production mode also refuses to generate ephemeral validator keys.
 
-```bash
-NODE_API_TOKEN=change-me PORT=8787 npm run node
-```
+## Real BDTC / BDTCC bridge runtime
 
-Without `NODE_API_TOKEN`, the local dev node keeps its previous open-local behavior. Do not expose that configuration directly to the public internet.
+The bridge is fail-closed for production. It does **not** invent a BDTCC network ID, genesis hash, network magic, address prefix, wallet identity, treasury address, or credentials.
 
-## BDTC / BDTCC bridge runtime
+The current `sharif456-tec/bdtcc` repository identifies itself as a Bitcoin Core integration/staging tree and does not contain verified BDTCC-specific network parameters. Those values must therefore come from the actual BDTCC network implementation/operator, not from this repository.
 
-The bridge supports BDTC settlement against a BDTCC-compatible JSON-RPC node. The repository deliberately does **not** invent BDTCC network parameters, genesis data, address prefixes, or credentials.
-
-Configure a real RPC node with environment variables:
+For a production node, set:
 
 ```bash
-BDTCC_RPC_URL=http://127.0.0.1:8332
-BDTCC_RPC_USERNAME=rpc-user
-BDTCC_RPC_PASSWORD=rpc-password
-BDTCC_NETWORK_ID=bdtcc
-BDTCC_MIN_CONFIRMATIONS=6
-BDTCC_DEPOSIT_ADDRESS=your-real-bdtcc-deposit-address
-BDTC_TREASURY_ADDRESS=treasury
-BDTC_RESERVE_ADDRESS=bdtc-reserve
-BDTCC_SETTLEMENT_FILE=data/bdtcc-settlement.json
-NODE_API_TOKEN=change-me
-npm run node
+NODE_ENV=production
+NODE_API_TOKEN=<real-secret>
+BDTCC_RPC_URL=<real-bdtcc-rpc-url>
+BDTCC_RPC_USERNAME=<real-rpc-username>
+BDTCC_RPC_PASSWORD=<real-rpc-password>
+BDTCC_NETWORK_ID=<real-network-id-from-bdtcc>
+BDTCC_MIN_CONFIRMATIONS=<operator-defined-confirmation-policy>
+BDTCC_DEPOSIT_ADDRESS=<real-bdtcc-deposit-address>
+BDTC_TREASURY_ADDRESS=<real-iit-bdtc-treasury-account>
+BDTC_RESERVE_ADDRESS=<real-iit-bdtc-reserve-account>
+VALIDATORS_FILE=<absolute-or-deployment-relative-path-to-secure-validator-json>
+TREASURY_VALIDATOR_ID=<real-validator-id>
+BDTCC_SETTLEMENT_FILE=<secure-persistent-path>
 ```
 
-RPC credentials remain server-side and are never returned by the API. The runtime endpoints are:
+`VALIDATORS_FILE` must contain at least three independently provisioned validator identities with their real public/private signing keys. The server refuses to generate temporary validator keys in production. Keep the file outside the public repository and protect it with the deployment's secret/key-management system.
 
-- `GET /bdtcc/status` — RPC/configuration and chain status
+Example structure only (values intentionally omitted):
+
+```json
+[
+  {"id":"<validator-1-id>","publicKey":"<real-public-key>","privateKey":"<real-private-key>"},
+  {"id":"<validator-2-id>","publicKey":"<real-public-key>","privateKey":"<real-private-key>"},
+  {"id":"<validator-3-id>","publicKey":"<real-public-key>","privateKey":"<real-private-key>"}
+]
+```
+
+Do not commit real RPC passwords, private keys, deposit addresses, treasury credentials, or production `.env` files.
+
+### Live settlement endpoints
+
+- `GET /bdtcc/status` — BDTCC RPC and chain status
 - `GET /bdtcc/withdrawals` — persisted withdrawal lifecycle records
-- `POST /bdtcc/deposits/settle` — verify a BDTCC UTXO and credit BDTC on IIT-NETWORK
-- `POST /bdtcc/withdrawals/broadcast` — broadcast a signed raw BDTCC transaction
-- `POST /bdtcc/withdrawals/confirm` — refresh BDTCC confirmations and settle when the threshold is met
+- `POST /bdtcc/deposits/settle` — verify a real BDTCC UTXO and credit BDTC on IIT-NETWORK
+- `POST /bdtcc/withdrawals/broadcast` — broadcast a real, already-signed BDTCC raw transaction
+- `POST /bdtcc/withdrawals/confirm` — refresh real BDTCC confirmations
 - `POST /bdtcc/withdrawals/mark-broadcast` — record an externally broadcast withdrawal
 - `POST /bdtcc/withdrawals/mark-settled` — record an externally confirmed withdrawal
 
-A deposit is accepted only after transaction-output, amount, address (when configured), unspent-output, and confirmation checks. Settlement state is persisted atomically so consumed deposits and withdrawal lifecycle records survive a node restart.
+A deposit is accepted only after transaction-output, amount, address, unspent-output, and confirmation checks. Settlement state is persisted atomically so consumed deposits and withdrawal lifecycle records survive a restart.
 
-The bridge still requires a real BDTCC node and a valid signed raw transaction for live withdrawals. It cannot create a real external BDTCC transaction without the external chain's actual wallet/signing implementation.
+The bridge does not manufacture external-chain transactions. A real BDTCC wallet/signing implementation must create and sign the withdrawal transaction before the broadcast endpoint is used.
+
+## Important production boundary
+
+This repository now refuses fake BDTCC production configuration, but that does not by itself make the consensus layer a production blockchain. Independent validator processes, authenticated peer-to-peer networking, real quorum verification across nodes, deterministic proposer rotation, HSM/KMS-backed signing, distributed durable storage, monitoring, backups, key rotation, and security auditing are still required before handling real funds.
 
 ## Cloudflare Pages
 
