@@ -9,6 +9,11 @@ export const BDTC_ASSET = Object.freeze({
   chainId: 'iit-bdtc-testnet-1'
 });
 
+function withoutIntentId(value) {
+  const { intentId: ignored, ...payload } = value;
+  return payload;
+}
+
 export class BdtccBridge {
   constructor({ networkId = 'bdtcc' } = {}) {
     this.networkId = networkId;
@@ -64,6 +69,6 @@ export class BdtccBridge {
     if (!intent.externalTxId || !Number.isInteger(intent.vout) || intent.vout < 0) throw new Error('Invalid external transaction reference');
     if (!intent.recipient) throw new Error('Missing BDTC recipient');
     if (!Number.isInteger(intent.confirmations) || intent.confirmations < 0) throw new Error('Invalid confirmation count');
-    return digest({ ...intent, intentId: undefined }) === intent.intentId;
+    return digest(withoutIntentId(intent)) === intent.intentId;
   }
 }
