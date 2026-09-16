@@ -63,6 +63,17 @@ export class BdtccRpcClient {
   getBlockchainInfo() {
     return this.call('getblockchaininfo');
   }
+
+  sendRawTransaction(rawTransaction, maxFeeRate) {
+    if (!rawTransaction || typeof rawTransaction !== 'string') throw new Error('Missing BDTCC raw transaction');
+    const params = maxFeeRate === undefined ? [rawTransaction] : [rawTransaction, maxFeeRate];
+    return this.call('sendrawtransaction', params);
+  }
+
+  getTransaction(txid, includeWatchOnly = false) {
+    if (!txid || typeof txid !== 'string') throw new Error('Missing BDTCC transaction id');
+    return this.call('gettransaction', [txid, includeWatchOnly]);
+  }
 }
 
 export class BdtccBridge {
@@ -151,6 +162,27 @@ export class BdtccBridge {
       amount: actualAmount,
       confirmations,
       address: expectedAddress || null
+    };
+  }
+
+  async broadcastWithdrawal(rawTransaction, maxFeeRate) {
+    if (!this.rpc) throw new Error('BDTCC RPC client is not configured');
+    const txid = await this.rpc.sendRawTransaction(rawTransaction, maxFeeRate);
+    if (!txid || typeof txid !== 'string') throw new Error('BDTCC RPC returned an invalid transaction id');
+    return { txid, broadcast: true };
+  }
+
+  async getWithdrawalStatus(txid, minConfirmations = this.minConfirmations) {
+    if (!this.rpc) throw new Error('BDTCC RPC client is not configured');
+    const tx = await this.rpc.getTransaction(txid);
+    const confirmations = Number(tx?.confirmations ?? 0);
+    if (!Number.isInteger(confirmations) || confirmations < 0) throw new Error('Invalid BDTCC confirmation count');
+    return {
+      txid,
+      confirmations,
+      settled: confirmations >= minConfirmations,
+      blockHash: tx?.blockhash || null,
+      raw: tx
     };
   }
 }

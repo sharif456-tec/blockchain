@@ -83,6 +83,33 @@ export class BdtccSettlement {
     return record;
   }
 
+  async broadcastWithdrawal(intentId, rawTransaction, maxFeeRate) {
+    const record = this.withdrawals.get(intentId);
+    if (!record) throw new Error('Unknown withdrawal intent');
+    if (record.status === 'settled') throw new Error('Withdrawal already settled');
+    if (record.status === 'broadcast') throw new Error('Withdrawal already broadcast');
+
+    const result = await this.bridge.broadcastWithdrawal(rawTransaction, maxFeeRate);
+    record.status = 'broadcast';
+    record.externalTxId = result.txid;
+    record.externalRawTransaction = rawTransaction;
+    return record;
+  }
+
+  async confirmWithdrawal(intentId) {
+    const record = this.withdrawals.get(intentId);
+    if (!record) throw new Error('Unknown withdrawal intent');
+    if (!record.externalTxId) throw new Error('Withdrawal has not been broadcast');
+    if (record.status === 'settled') return record;
+
+    const status = await this.bridge.getWithdrawalStatus(record.externalTxId);
+    if (!status.settled) return { ...record, confirmationStatus: status };
+
+    record.status = 'settled';
+    record.confirmationStatus = status;
+    return record;
+  }
+
   markWithdrawalBroadcast(intentId, externalTxId) {
     if (!externalTxId || typeof externalTxId !== 'string') throw new Error('Missing BDTCC transaction id');
     const record = this.withdrawals.get(intentId);
