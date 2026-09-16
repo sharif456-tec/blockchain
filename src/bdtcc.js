@@ -14,9 +14,62 @@ function withoutIntentId(value) {
   return payload;
 }
 
+function decimalToAtomic(value, decimals = 8) {
+  const text = typeof value === 'number' ? value.toFixed(decimals) : String(value);
+  if (!/^\d+(?:\.\d+)?$/.test(text)) throw new Error('Invalid BDTCC amount');
+  const [whole, fraction = ''] = text.split('.');
+  if (fraction.length > decimals) throw new Error('BDTCC amount has too many decimals');
+  const atomic = BigInt(whole) * (10n ** BigInt(decimals)) + BigInt((fraction + '0'.repeat(decimals)).slice(0, decimals));
+  if (atomic <= 0n || atomic > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('BDTC amount exceeds safe integer range');
+  return Number(atomic);
+}
+
+export class BdtccRpcClient {
+  constructor({ url, username, password, fetchImpl = globalThis.fetch } = {}) {
+    if (!url || typeof url !== 'string') throw new Error('Missing BDTCC RPC URL');
+    if (typeof fetchImpl !== 'function') throw new Error('Fetch implementation is required');
+    this.url = url;
+    this.username = username;
+    this.password = password;
+    this.fetchImpl = fetchImpl;
+    this.nextId = 1;
+  }
+
+  async call(method, params = []) {
+    const headers = { 'content-type': 'application/json' };
+    if (this.username !== undefined || this.password !== undefined) {
+      const token = Buffer.from(`${this.username ?? ''}:${this.password ?? ''}`).toString('base64');
+      headers.authorization = `Basic ${token}`;
+    }
+    const response = await this.fetchImpl(this.url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ jsonrpc: '1.0', id: this.nextId++, method, params })
+    });
+    if (!response.ok) throw new Error(`BDTCC RPC HTTP ${response.status}`);
+    const body = await response.json();
+    if (body.error) throw new Error(`BDTCC RPC ${body.error.message || 'unknown error'}`);
+    return body.result;
+  }
+
+  getRawTransaction(txid, verbose = true) {
+    return this.call('getrawtransaction', [txid, verbose]);
+  }
+
+  getTxOut(txid, vout, includeMempool = true) {
+    return this.call('gettxout', [txid, vout, includeMempool]);
+  }
+
+  getBlockchainInfo() {
+    return this.call('getblockchaininfo');
+  }
+}
+
 export class BdtccBridge {
-  constructor({ networkId = 'bdtcc' } = {}) {
+  constructor({ networkId = 'bdtcc', minConfirmations = 6, rpc = null } = {}) {
     this.networkId = networkId;
+    this.minConfirmations = minConfirmations;
+    this.rpc = rpc;
   }
 
   assertAtomicAmount(amount) {
@@ -70,5 +123,34 @@ export class BdtccBridge {
     if (!intent.recipient) throw new Error('Missing BDTC recipient');
     if (!Number.isInteger(intent.confirmations) || intent.confirmations < 0) throw new Error('Invalid confirmation count');
     return digest(withoutIntentId(intent)) === intent.intentId;
+  }
+
+  async verifyExternalDeposit({ txid, vout, expectedAmount, expectedAddress, minConfirmations = this.minConfirmations }) {
+    if (!this.rpc) throw new Error('BDTCC RPC client is not configured');
+    if (!txid || !Number.isInteger(vout) || vout < 0) throw new Error('Invalid external transaction reference');
+    this.assertAtomicAmount(expectedAmount);
+    const tx = await this.rpc.getRawTransaction(txid, true);
+    const output = tx?.vout?.[vout];
+    if (!output) throw new Error('BDTCC transaction output not found');
+    const actualAmount = decimalToAtomic(output.value, BDTC_ASSET.decimals);
+    if (actualAmount !== expectedAmount) throw new Error('BDTCC output amount mismatch');
+    if (expectedAddress) {
+      const addresses = output.scriptPubKey?.addresses || [];
+      if (!addresses.includes(expectedAddress)) throw new Error('BDTCC output address mismatch');
+    }
+    const txOut = await this.rpc.getTxOut(txid, vout, true);
+    if (!txOut) throw new Error('BDTCC output is spent or unavailable');
+    const confirmations = Number(txOut.confirmations ?? tx.confirmations ?? 0);
+    if (!Number.isInteger(confirmations) || confirmations < minConfirmations) {
+      throw new Error(`Insufficient BDTCC confirmations: ${confirmations}`);
+    }
+    return {
+      verified: true,
+      txid,
+      vout,
+      amount: actualAmount,
+      confirmations,
+      address: expectedAddress || null
+    };
   }
 }
