@@ -22,6 +22,25 @@ test('BFT quorum finalizes a private block and publishes a public anchor', () =>
   assert.equal(quorumFor(4), 3);
 });
 
+test('independent validator votes can finalize a proposed block', () => {
+  const { validators, alice, bob, network } = setup();
+  network.submitTransaction(createTransaction({ from: 'alice', to: 'bob', amount: 100, nonce: 0, identity: alice }));
+  const block = network.buildBlock(validators[0].id);
+  const votes = validators.slice(0, 3).map(validator => network.voteForBlock(block, validator.id));
+  const finalized = network.finalizeWithVotes(block, votes);
+  assert.equal(finalized.quorumCertificate.length, 3);
+  assert.equal(network.balanceOf('bob'), 100);
+});
+
+test('snapshots never persist validator private keys', () => {
+  const { validators, network } = setup();
+  const snapshot = network.snapshot();
+  assert.equal(snapshot.validators.every(validator => !('privateKey' in validator)), true);
+  const restored = HybridNetwork.fromSnapshot(snapshot, validators);
+  assert.equal(restored.validators.get('a').publicKey, validators[0].publicKey);
+  assert.equal(restored.validators.get('a').privateKey, validators[0].privateKey);
+});
+
 test('wrong chain and replayed nonce are rejected', () => {
   const { validators, alice, bob, network } = setup();
   assert.throws(() => network.submitTransaction(createTransaction({ chainId: 'wrong-chain', from: 'alice', to: 'bob', amount: 1, nonce: 0, identity: alice })), /Wrong chain ID/);
