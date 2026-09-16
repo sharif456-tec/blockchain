@@ -6,7 +6,7 @@ Read the full architecture in [HYBRID-BLOCKCHAIN-DESIGN.md](HYBRID-BLOCKCHAIN-DE
 
 ## Runnable prototype
 
-This repository includes a dependency-free hybrid model with signed BDTC transactions, permissioned validator quorum certificates, deterministic state roots, and a mock public anchor layer.
+This repository includes a dependency-free hybrid model with signed BDTC transactions, validator quorum certificates, deterministic state roots, and a mock public anchor layer.
 
 ```bash
 npm test
@@ -23,13 +23,63 @@ Run a local node with durable JSON state:
 npm run node
 ```
 
-The node exposes `GET /health`, `GET /state`, `GET /blocks`, `GET /anchors`, `POST /transactions`, `POST /blocks/propose`, and `POST /anchors/verify`.
+The node exposes `GET /health`, `GET /state`, `GET /blocks`, `GET /anchors`, `POST /transactions`, `POST /blocks/propose`, `POST /consensus/vote`, and the BDTCC settlement endpoints.
 
 ### Node security
 
-Set `NODE_API_TOKEN` to require `Authorization: Bearer <token>` (or `X-API-Key`) on protected endpoints. `MAX_BODY_BYTES` and `REQUEST_TIMEOUT_MS` can limit request size and duration.
+Set `NODE_API_TOKEN` to require `Authorization: Bearer <token>` (or `X-API-Key`) on protected endpoints. `MAX_BODY_BYTES`, `REQUEST_TIMEOUT_MS`, and `PEER_TIMEOUT_MS` limit request sizes and request duration.
 
-For production, `NODE_API_TOKEN` is mandatory. Production mode also refuses to generate ephemeral validator keys.
+Production nodes require a real local validator identity and never generate or store the private keys of other validators.
+
+## Independent validator consensus
+
+The production node now separates the validator public registry from the local validator private key. Each validator process has:
+
+- the public keys of the complete validator set;
+- exactly one local validator private key;
+- authenticated peer URLs for the other validators;
+- the ability to sign only its own validator vote.
+
+A proposer builds a block without manufacturing votes. It asks independent validator peers to verify and sign that exact block. The block is finalized only after a `2/3 + 1` validator quorum is collected and cryptographically verified.
+
+Production environment requirements:
+
+```bash
+NODE_ENV=production
+NODE_API_TOKEN=<real-secret>
+PEER_API_TOKEN=<separate-real-peer-secret>
+VALIDATOR_REGISTRY_FILE=<public-validator-registry-file>
+NODE_VALIDATOR_ID=<this-node-validator-id>
+NODE_VALIDATOR_PRIVATE_KEY_FILE=<this-node-private-key-file>
+PEERS_FILE=<authenticated-validator-peer-file>
+TREASURY_VALIDATOR_ID=<validator-id-authorized-for-settlement>
+BDTCC_SETTLEMENT_FILE=<secure-persistent-path>
+```
+
+Public validator registry example (no private keys):
+
+```json
+[
+  {"id":"validator-1","publicKey":"<real-public-key>"},
+  {"id":"validator-2","publicKey":"<real-public-key>"},
+  {"id":"validator-3","publicKey":"<real-public-key>"}
+]
+```
+
+Peer file example (deployment configuration, not repository data):
+
+```json
+[
+  {"id":"node-2","url":"https://validator-2.example","validatorId":"validator-2"},
+  {"id":"node-3","url":"https://validator-3.example","validatorId":"validator-3"}
+]
+```
+
+The `/consensus/vote` endpoint is authenticated with `PEER_API_TOKEN`. A production proposer rejects a non-local proposer identity, collects independent peer votes, verifies the quorum, and only then finalizes the block.
+
+### Important limitation
+
+This is a real multi-process validator-voting foundation, but it is **not yet a complete production BFT protocol**. It still needs durable distributed storage/replication, deterministic proposer rotation and view changes, equivocation detection/slashing policy, network-level replay protection, peer identity certificates/mTLS, crash recovery, state synchronization, mempool synchronization, monitoring, and a security audit before real funds are handled.
 
 ## Real BDTC / BDTCC bridge runtime
 
@@ -40,8 +90,6 @@ The current `sharif456-tec/bdtcc` repository identifies itself as a Bitcoin Core
 For a production node, set:
 
 ```bash
-NODE_ENV=production
-NODE_API_TOKEN=<real-secret>
 BDTCC_RPC_URL=<real-bdtcc-rpc-url>
 BDTCC_RPC_USERNAME=<real-rpc-username>
 BDTCC_RPC_PASSWORD=<real-rpc-password>
@@ -50,21 +98,6 @@ BDTCC_MIN_CONFIRMATIONS=<operator-defined-confirmation-policy>
 BDTCC_DEPOSIT_ADDRESS=<real-bdtcc-deposit-address>
 BDTC_TREASURY_ADDRESS=<real-iit-bdtc-treasury-account>
 BDTC_RESERVE_ADDRESS=<real-iit-bdtc-reserve-account>
-VALIDATORS_FILE=<absolute-or-deployment-relative-path-to-secure-validator-json>
-TREASURY_VALIDATOR_ID=<real-validator-id>
-BDTCC_SETTLEMENT_FILE=<secure-persistent-path>
-```
-
-`VALIDATORS_FILE` must contain at least three independently provisioned validator identities with their real public/private signing keys. The server refuses to generate temporary validator keys in production. Keep the file outside the public repository and protect it with the deployment's secret/key-management system.
-
-Example structure only (values intentionally omitted):
-
-```json
-[
-  {"id":"<validator-1-id>","publicKey":"<real-public-key>","privateKey":"<real-private-key>"},
-  {"id":"<validator-2-id>","publicKey":"<real-public-key>","privateKey":"<real-private-key>"},
-  {"id":"<validator-3-id>","publicKey":"<real-public-key>","privateKey":"<real-private-key>"}
-]
 ```
 
 Do not commit real RPC passwords, private keys, deposit addresses, treasury credentials, or production `.env` files.
@@ -82,10 +115,6 @@ Do not commit real RPC passwords, private keys, deposit addresses, treasury cred
 A deposit is accepted only after transaction-output, amount, address, unspent-output, and confirmation checks. Settlement state is persisted atomically so consumed deposits and withdrawal lifecycle records survive a restart.
 
 The bridge does not manufacture external-chain transactions. A real BDTCC wallet/signing implementation must create and sign the withdrawal transaction before the broadcast endpoint is used.
-
-## Important production boundary
-
-This repository now refuses fake BDTCC production configuration, but that does not by itself make the consensus layer a production blockchain. Independent validator processes, authenticated peer-to-peer networking, real quorum verification across nodes, deterministic proposer rotation, HSM/KMS-backed signing, distributed durable storage, monitoring, backups, key rotation, and security auditing are still required before handling real funds.
 
 ## Cloudflare Pages
 
@@ -110,4 +139,4 @@ supabase secrets set SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 supabase functions deploy network-status --no-verify-jwt
 ```
 
-Function routes: `/network-status`, `/network-status/blocks`, `/network-status/anchors`, and `/network-status/accounts`. Keep the service role key server-side; never put it in the Pages frontend.
+Function routes: `/network-status`, `/network-status/blocks`, `/network-status/anchors`, and `/network-status/accounts`. Keep the service role key server-side; never put the service role key in the Pages frontend.
