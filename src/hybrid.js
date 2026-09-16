@@ -21,6 +21,21 @@ function transactionPayload(transaction) {
   return payload;
 }
 
+function stateRoot(state) {
+  return digest(Object.fromEntries([...state].sort()));
+}
+
+function blockHeader(block) {
+  return {
+    chainId: block.chainId,
+    height: block.height,
+    previousHash: block.previousHash,
+    transactionsRoot: block.transactionsRoot,
+    stateRoot: block.stateRoot,
+    proposer: block.proposer
+  };
+}
+
 export function quorumFor(validatorCount) {
   return Math.floor((validatorCount * 2) / 3) + 1;
 }
@@ -29,6 +44,7 @@ export class HybridNetwork {
   constructor({ validators, initialBalances = {}, anchorInterval = 2 }) {
     if (!validators?.length || validators.length < 3) throw new Error('At least 3 validators are required');
     this.validators = new Map(validators.map(validator => [validator.id, validator]));
+    if (this.validators.size !== validators.length) throw new Error('Validator IDs must be unique');
     this.anchorInterval = anchorInterval;
     this.state = new Map(Object.entries(initialBalances));
     this.nonces = new Map();
@@ -48,6 +64,7 @@ export class HybridNetwork {
     if (transaction.nonce !== this.nonceOf(transaction.from)) throw new Error('Invalid nonce');
     if (!transaction.publicKey || !verify(transactionPayload(transaction), transaction.signature, transaction.publicKey)) throw new Error('Invalid transaction signature');
     if (this.balanceOf(transaction.from) < transaction.amount + transaction.fee) throw new Error('Insufficient balance');
+    if (this.pending.some(candidate => digest(candidate) === digest(transaction))) throw new Error('Duplicate pending transaction');
     this.pending.push(transaction);
     return transaction;
   }
@@ -64,7 +81,7 @@ export class HybridNetwork {
       height: this.blocks.length + 1,
       previousHash: this.blocks.at(-1)?.hash || digest('genesis'),
       transactionsRoot: merkleRoot(transactions),
-      stateRoot: digest(Object.fromEntries([...workingState].sort())),
+      stateRoot: stateRoot(workingState),
       proposer: proposerId
     };
     const blockHash = digest(header);
@@ -75,6 +92,7 @@ export class HybridNetwork {
   }
 
   applyTransaction(transaction, state = this.state, nonces = this.nonces) {
+    if (!transaction.publicKey || !verify(transactionPayload(transaction), transaction.signature, transaction.publicKey)) throw new Error('Invalid transaction signature');
     const required = transaction.amount + transaction.fee;
     const balance = state.get(transaction.from) || 0;
     if (nonces.get(transaction.from) !== undefined && transaction.nonce !== nonces.get(transaction.from)) throw new Error('Transaction sequence conflict');
@@ -85,7 +103,7 @@ export class HybridNetwork {
   }
 
   finalizeBlock(block, nextState, nextNonces) {
-    if (!this.verifyBlock(block)) throw new Error('Invalid quorum certificate');
+    if (!this.verifyBlock(block, nextState, nextNonces)) throw new Error('Invalid block or quorum certificate');
     this.state = nextState;
     this.nonces = nextNonces;
     this.blocks.push(block);
@@ -94,15 +112,33 @@ export class HybridNetwork {
     return block;
   }
 
-  verifyBlock(block) {
+  verifyBlock(block, expectedState = null, expectedNonces = null) {
     if (block.chainId !== CHAIN_ID || block.height !== this.blocks.length + 1) return false;
+    if (!this.validators.has(block.proposer)) return false;
     if (block.previousHash !== (this.blocks.at(-1)?.hash || digest('genesis'))) return false;
+    if (!Array.isArray(block.transactions)) return false;
+    if (block.transactionsRoot !== merkleRoot(block.transactions)) return false;
+    if (digest(blockHeader(block)) !== block.hash) return false;
     if (!block.quorumCertificate || block.quorumCertificate.length < quorumFor(this.validators.size)) return false;
     const seen = new Set();
     for (const vote of block.quorumCertificate) {
       const validator = this.validators.get(vote.validator);
       if (!validator || seen.has(vote.validator) || !verify(block.hash, vote.signature, validator.publicKey)) return false;
       seen.add(vote.validator);
+    }
+    const workingState = new Map(this.state);
+    const workingNonces = new Map(this.nonces);
+    try {
+      for (const transaction of block.transactions) this.applyTransaction(transaction, workingState, workingNonces);
+    } catch {
+      return false;
+    }
+    if (stateRoot(workingState) !== block.stateRoot) return false;
+    if (expectedState && stateRoot(expectedState) !== block.stateRoot) return false;
+    if (expectedNonces) {
+      const actual = JSON.stringify(Object.fromEntries([...workingNonces].sort()));
+      const expected = JSON.stringify(Object.fromEntries([...expectedNonces].sort()));
+      if (actual !== expected) return false;
     }
     return true;
   }
